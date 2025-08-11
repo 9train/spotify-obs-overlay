@@ -31,7 +31,7 @@
     }
 
     .info-card {
-      min-width: 0; /* allow shrinking */
+      min-width: 0; /* allow shrinking so art never drops */
       max-width: 1100px;
       padding: 28px 28px 24px 28px;
       border-radius: var(--radius);
@@ -66,7 +66,7 @@
       font-size: 18px;
     }
 
-    /* Hide the connect button once we're authenticated */
+    /* Hide connect/status when authenticated (CSS-level) */
     body.connected .connect { display: none !important; }
     body.connected #statusMsg { display: none; }
 
@@ -122,170 +122,12 @@ async function sha256(plain) { const enc = new TextEncoder().encode(plain); cons
 function base64url(uint8) { return btoa(String.fromCharCode(...uint8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function randStr(n=64){ const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let s=''; for(let i=0;i<n;i++) s+=chars[Math.floor(Math.random()*chars.length)]; return s; }
 
-/* --- Auth UI helpers --- */
-function setConnectedUI(connected){
-  document.body.classList.toggle('connected', !!connected);
+/* --- Auth/UI helpers --- */
+function hideConnect() {
   const btn = document.getElementById('connectBtn');
-  if(btn) btn.setAttribute('aria-hidden', connected ? 'true' : 'false');
+  const status = document.getElementById('statusMsg');
+  if (btn) btn.remove();
+  if (status) status.remove();
 }
-
-async function beginAuth(){
-  const verifier = randStr(64);
-  const challenge = base64url(await sha256(verifier));
-  sessionStorage.setItem('pkce_verifier', verifier);
-  const url = new URL('https://accounts.spotify.com/authorize');
-  url.searchParams.set('client_id', CLIENT_ID);
-  url.searchParams.set('response_type','code');
-  url.searchParams.set('redirect_uri', REDIRECT_URI);
-  url.searchParams.set('scope', SCOPES.join(' '));
-  url.searchParams.set('code_challenge_method','S256');
-  url.searchParams.set('code_challenge', challenge);
-  location.href = url.toString();
-}
-
-async function exchangeToken(code){
-  const verifier = sessionStorage.getItem('pkce_verifier');
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    grant_type: 'authorization_code',
-    code, redirect_uri: REDIRECT_URI, code_verifier: verifier
-  });
-  const r = await fetch('https://accounts.spotify.com/api/token',{ method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-  if(!r.ok) throw new Error('Token exchange failed');
-  const data = await r.json();
-  const exp = Date.now() + (data.expires_in-60)*1000;
-  localStorage.setItem('sp_access', data.access_token);
-  localStorage.setItem('sp_refresh', data.refresh_token);
-  localStorage.setItem('sp_exp', String(exp));
-  setConnectedUI(true);
-}
-
-async function refresh(){
-  const refresh_token = localStorage.getItem('sp_refresh');
-  if(!refresh_token) { setConnectedUI(false); return beginAuth(); }
-  const body = new URLSearchParams({ client_id: CLIENT_ID, grant_type: 'refresh_token', refresh_token });
-  const r = await fetch('https://accounts.spotify.com/api/token',{ method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-  if(!r.ok) { setConnectedUI(false); return beginAuth(); }
-  const data = await r.json();
-  const exp = Date.now() + (data.expires_in-60)*1000;
-  localStorage.setItem('sp_access', data.access_token);
-  if(data.refresh_token) localStorage.setItem('sp_refresh', data.refresh_token);
-  localStorage.setItem('sp_exp', String(exp));
-  setConnectedUI(true);
-}
-
-function accessToken(){
-  const tok = localStorage.getItem('sp_access');
-  const exp = Number(localStorage.getItem('sp_exp')||0);
-  if(!tok || Date.now()>exp) return null;
-  return tok;
-}
-
-/****************************
- * UI refs
- ****************************/
-const titleEl = document.getElementById('title');
-const subEl = document.getElementById('subtitle');
-const artImg = document.getElementById('art');
-const fillEl = document.getElementById('fill');
-const elTime = document.getElementById('elapsed');
-const reTime = document.getElementById('remaining');
-const connectBtn = document.getElementById('connectBtn');
-const statusMsg = document.getElementById('statusMsg');
-const infoCard = document.getElementById('infoCard');
-const softGlow = document.getElementById('softGlow');
-
-let playing = null;
-let progressMs = 0, durationMs = 0, lastTick = 0;
-
-function fmt(ms){
-  ms = Math.max(0, Math.round(ms/1000));
-  const m = Math.floor(ms/60), s = ms%60; return `${m}:${String(s).padStart(2,'0')}`;
-}
-
-function updateProgressLoop(){
-  const now = Date.now();
-  if(playing && !playing.is_playing){ lastTick = now; requestAnimationFrame(updateProgressLoop); return; }
-  if(playing){
-    const delta = now - lastTick; lastTick = now; progressMs += delta; 
-    const pct = Math.max(0, Math.min(100, (progressMs/durationMs)*100));
-    fillEl.style.width = pct + '%';
-    elTime.textContent = fmt(progressMs);
-    reTime.textContent = '-' + fmt(durationMs - progressMs);
-  }
-  requestAnimationFrame(updateProgressLoop);
-}
-
-function setGradientFromImage(img){
-  const c = document.createElement('canvas'); c.width = 20; c.height = 20; const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0,0,20,20);
-  const data = ctx.getImageData(0,0,20,20).data;
-  let r=0,g=0,b=0,count=0;
-  for(let i=0;i<data.length;i+=4){ r+=data[i]; g+=data[i+1]; b+=data[i+2]; count++; }
-  r=Math.round(r/count); g=Math.round(g/count); b=Math.round(b/count);
-  const base = `rgba(${r},${g},${b},0.9)`;
-  const lr = Math.min(255, Math.round(r*1.2+15));
-  const lg = Math.min(255, Math.round(g*1.2+15));
-  const lb = Math.min(255, Math.round(b*1.2+15));
-  const light = `rgba(${lr},${lg},${lb},0.7)`;
-  infoCard.style.background = `linear-gradient(120deg, ${light}, ${base})`;
-  softGlow.style.background = `radial-gradient(circle at 30% 30%, rgba(${lr},${lg},${lb},0.45), rgba(0,0,0,0) 60%)`;
-}
-
-/****************************
- * Spotify polling
- ****************************/
-async function getCurrent(){
-  try {
-    let tok = accessToken();
-    if(!tok) { await refresh(); tok = accessToken(); }
-    setConnectedUI(!!tok);
-
-    if(!tok) { statusMsg.textContent = 'Click connect'; return; }
-
-    const r = await fetch('https://api.spotify.com/v1/me/player/currently-playing', { headers:{ Authorization: `Bearer ${tok}` } });
-    if(r.status===204){ statusMsg.textContent = 'Nothing playing'; return; }
-    if(r.status===401){ await refresh(); return; }
-    const data = await r.json();
-    if(!data || !data.item){ statusMsg.textContent = 'No track'; return; }
-
-    playing = data;
-    progressMs = data.progress_ms || 0; durationMs = data.item.duration_ms || 1; lastTick = Date.now();
-
-    const name = data.item.name;
-    const artists = (data.item.artists||[]).map(a=>a.name).join(', ');
-    titleEl.textContent = name;
-    subEl.textContent = artists;
-
-    const imgs = data.item.album?.images || [];
-    const best = imgs.sort((a,b)=>b.width-a.width)[0];
-    if(best){ artImg.src = best.url; }
-    statusMsg.textContent = data.is_playing? 'Playing' : 'Paused';
-  } catch (e){ statusMsg.textContent = 'Error fetching'; console.error(e); }
-}
-
-/* Events */
-artImg.addEventListener('load', ()=> setGradientFromImage(artImg));
-connectBtn.addEventListener('click', ()=> beginAuth());
-
-/* Init */
-(async function init(){
-  // If we came back from Spotify with a code, exchange it.
-  const u = new URL(location.href);
-  const code = u.searchParams.get('code');
-  if(code){
-    history.replaceState({}, '', REDIRECT_URI);
-    try { await exchangeToken(code); } catch(e){ console.error(e); }
-  }
-
-  // If a token is already cached, hide the button.
-  setConnectedUI(!!accessToken());
-
-  lastTick = Date.now();
-  requestAnimationFrame(updateProgressLoop);
-  await getCurrent();
-  setInterval(getCurrent, 4000);
-})();
-</script>
-</body>
-</html>
+function setConnectedUI(connected){
+  document.body.classList.toggle('conne
