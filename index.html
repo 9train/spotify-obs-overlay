@@ -66,6 +66,10 @@
       font-size: 18px;
     }
 
+    /* Hide the connect button once we're authenticated */
+    body.connected .connect { display: none !important; }
+    body.connected #statusMsg { display: none; }
+
     /* Optional: keep side-by-side on small OBS windows */
     @media (max-width: 900px) {
       .overlay { grid-template-columns: minmax(0, 1fr) 260px; }
@@ -93,7 +97,7 @@
       </div>
 
       <div style="margin-top: 18px">
-        <button class="connect" id="connectBtn">Connect to Spotify</button>
+        <button class="connect" id="connectBtn" aria-hidden="false">Connect to Spotify</button>
         <span id="statusMsg" style="margin-left: 12px; opacity: .85;"></span>
       </div>
     </div>
@@ -117,6 +121,13 @@ const SCOPES = ["user-read-currently-playing", "user-read-playback-state"];
 async function sha256(plain) { const enc = new TextEncoder().encode(plain); const buf = await crypto.subtle.digest('SHA-256', enc); return new Uint8Array(buf); }
 function base64url(uint8) { return btoa(String.fromCharCode(...uint8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function randStr(n=64){ const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let s=''; for(let i=0;i<n;i++) s+=chars[Math.floor(Math.random()*chars.length)]; return s; }
+
+/* --- Auth UI helpers --- */
+function setConnectedUI(connected){
+  document.body.classList.toggle('connected', !!connected);
+  const btn = document.getElementById('connectBtn');
+  if(btn) btn.setAttribute('aria-hidden', connected ? 'true' : 'false');
+}
 
 async function beginAuth(){
   const verifier = randStr(64);
@@ -146,29 +157,32 @@ async function exchangeToken(code){
   localStorage.setItem('sp_access', data.access_token);
   localStorage.setItem('sp_refresh', data.refresh_token);
   localStorage.setItem('sp_exp', String(exp));
+  setConnectedUI(true);
 }
 
 async function refresh(){
   const refresh_token = localStorage.getItem('sp_refresh');
-  if(!refresh_token) return beginAuth();
+  if(!refresh_token) { setConnectedUI(false); return beginAuth(); }
   const body = new URLSearchParams({ client_id: CLIENT_ID, grant_type: 'refresh_token', refresh_token });
   const r = await fetch('https://accounts.spotify.com/api/token',{ method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-  if(!r.ok) return beginAuth();
+  if(!r.ok) { setConnectedUI(false); return beginAuth(); }
   const data = await r.json();
   const exp = Date.now() + (data.expires_in-60)*1000;
   localStorage.setItem('sp_access', data.access_token);
   if(data.refresh_token) localStorage.setItem('sp_refresh', data.refresh_token);
   localStorage.setItem('sp_exp', String(exp));
+  setConnectedUI(true);
 }
 
 function accessToken(){
   const tok = localStorage.getItem('sp_access');
   const exp = Number(localStorage.getItem('sp_exp')||0);
-  if(!tok || Date.now()>exp) return null; return tok;
+  if(!tok || Date.now()>exp) return null;
+  return tok;
 }
 
 /****************************
- * UI helpers
+ * UI refs
  ****************************/
 const titleEl = document.getElementById('title');
 const subEl = document.getElementById('subtitle');
@@ -225,6 +239,8 @@ async function getCurrent(){
   try {
     let tok = accessToken();
     if(!tok) { await refresh(); tok = accessToken(); }
+    setConnectedUI(!!tok);
+
     if(!tok) { statusMsg.textContent = 'Click connect'; return; }
 
     const r = await fetch('https://api.spotify.com/v1/me/player/currently-playing', { headers:{ Authorization: `Bearer ${tok}` } });
@@ -232,6 +248,7 @@ async function getCurrent(){
     if(r.status===401){ await refresh(); return; }
     const data = await r.json();
     if(!data || !data.item){ statusMsg.textContent = 'No track'; return; }
+
     playing = data;
     progressMs = data.progress_ms || 0; durationMs = data.item.duration_ms || 1; lastTick = Date.now();
 
@@ -247,16 +264,23 @@ async function getCurrent(){
   } catch (e){ statusMsg.textContent = 'Error fetching'; console.error(e); }
 }
 
+/* Events */
 artImg.addEventListener('load', ()=> setGradientFromImage(artImg));
 connectBtn.addEventListener('click', ()=> beginAuth());
 
+/* Init */
 (async function init(){
+  // If we came back from Spotify with a code, exchange it.
   const u = new URL(location.href);
   const code = u.searchParams.get('code');
   if(code){
     history.replaceState({}, '', REDIRECT_URI);
     try { await exchangeToken(code); } catch(e){ console.error(e); }
   }
+
+  // If a token is already cached, hide the button.
+  setConnectedUI(!!accessToken());
+
   lastTick = Date.now();
   requestAnimationFrame(updateProgressLoop);
   await getCurrent();
