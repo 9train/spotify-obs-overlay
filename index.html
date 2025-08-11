@@ -15,15 +15,15 @@
     html, body {
       height: 100%;
       margin: 0;
-      background: transparent; /* let OBS scene show through */
+      background: transparent;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       color: var(--text);
     }
     .overlay {
       display: grid;
-      grid-auto-flow: column;
+      grid-template-columns: minmax(0, 1fr) 340px; /* info grows | art fixed */
       align-items: center;
-      gap: 24px;
+      column-gap: 16px;
       padding: 20px;
       width: 100%;
       height: 100%;
@@ -31,7 +31,7 @@
     }
 
     .info-card {
-      min-width: 520px;
+      min-width: 0; /* allow shrinking */
       max-width: 1100px;
       padding: 28px 28px 24px 28px;
       border-radius: var(--radius);
@@ -42,7 +42,7 @@
     }
     .soft-glow {
       position: absolute; inset: -25%; filter: blur(40px); opacity: 0.55; pointer-events: none;
-      background: radial-gradient( circle at 30% 20%, rgba(255,255,255,0.18), rgba(0,0,0,0) 60% );
+      background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.18), rgba(0,0,0,0) 60%);
     }
     .title {
       font-weight: 800; letter-spacing: 0.3px; line-height: 1.1;
@@ -64,19 +64,16 @@
       appearance: none; background: #1DB954; color: #000; font-weight: 800; border: none; 
       padding: 14px 18px; border-radius: 999px; cursor: pointer; box-shadow: var(--shadow);
       font-size: 18px;
-.overlay { grid-auto-flow: column !important; }
     }
 
-    /* Small screens (optional) */
+    /* Optional: keep side-by-side on small OBS windows */
     @media (max-width: 900px) {
-      .overlay { grid-auto-flow: row; }
-      .art-card { justify-self: start; width: 260px; height: 260px; }
+      .overlay { grid-template-columns: minmax(0, 1fr) 260px; }
+      .art-card { width: 260px; height: 260px; justify-self: end; }
       .title { font-size: 36px; }
       .subtitle { font-size: 20px; }
       .time { font-size: 22px; width: 90px; }
-      .info-card { min-width: unset; }
-.overlay { grid-auto-flow: column !important; }
-
+      .info-card { min-width: 0; }
     }
   </style>
 </head>
@@ -110,9 +107,9 @@
 /****************************
  * 1) CONFIG – EDIT THIS
  ****************************/
-const CLIENT_ID = "8d3230ed8cbb41609244dc94e87b7dbd"; // ← from your Spotify app dashboard
-const REDIRECT_URI = "https://9train.github.io/spotify-obs-overlay/"; // exact GitHub Pages URL
-const SCOPES = ["user-read-currently-playing", "user-read-playback-state"]; // read-only
+const CLIENT_ID = "8d3230ed8cbb41609244dc94e87b7dbd";
+const REDIRECT_URI = "https://9train.github.io/spotify-obs-overlay/";
+const SCOPES = ["user-read-currently-playing", "user-read-playback-state"];
 
 /****************************
  * PKCE OAuth helpers
@@ -184,7 +181,7 @@ const statusMsg = document.getElementById('statusMsg');
 const infoCard = document.getElementById('infoCard');
 const softGlow = document.getElementById('softGlow');
 
-let playing = null; // track state
+let playing = null;
 let progressMs = 0, durationMs = 0, lastTick = 0;
 
 function fmt(ms){
@@ -206,7 +203,6 @@ function updateProgressLoop(){
 }
 
 function setGradientFromImage(img){
-  // draw tiny canvas and sample average + a brightened variant
   const c = document.createElement('canvas'); c.width = 20; c.height = 20; const ctx = c.getContext('2d');
   ctx.drawImage(img, 0,0,20,20);
   const data = ctx.getImageData(0,0,20,20).data;
@@ -214,7 +210,6 @@ function setGradientFromImage(img){
   for(let i=0;i<data.length;i+=4){ r+=data[i]; g+=data[i+1]; b+=data[i+2]; count++; }
   r=Math.round(r/count); g=Math.round(g/count); b=Math.round(b/count);
   const base = `rgba(${r},${g},${b},0.9)`;
-  // lighten the second stop a bit
   const lr = Math.min(255, Math.round(r*1.2+15));
   const lg = Math.min(255, Math.round(g*1.2+15));
   const lb = Math.min(255, Math.round(b*1.2+15));
@@ -252,27 +247,18 @@ async function getCurrent(){
   } catch (e){ statusMsg.textContent = 'Error fetching'; console.error(e); }
 }
 
-// when art loads, compute gradient colors
 artImg.addEventListener('load', ()=> setGradientFromImage(artImg));
-
-// auth button
 connectBtn.addEventListener('click', ()=> beginAuth());
 
-// On load: handle OAuth redirect or start polling
 (async function init(){
-  // Handle auth code in URL
   const u = new URL(location.href);
   const code = u.searchParams.get('code');
   if(code){
-    history.replaceState({}, '', REDIRECT_URI); // clean URL
+    history.replaceState({}, '', REDIRECT_URI);
     try { await exchangeToken(code); } catch(e){ console.error(e); }
   }
-
-  // Start animation/progress loop
   lastTick = Date.now();
   requestAnimationFrame(updateProgressLoop);
-
-  // Poll playback every 4s for changes
   await getCurrent();
   setInterval(getCurrent, 4000);
 })();
